@@ -1,0 +1,95 @@
+---
+title: "Project Proposal II, EDA, and Modeling Plans"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readxl)
+library(mosaic)
+```
+
+Our original data set contains over 13,000 case about subsidized housing in the United States. Each observation is a specific housing program in a specific county. For example, an observation may be Project Based Section 8 in Ramsey County, MN. For our project, we are going to look specifically at Housing Choice Vouchers and Public Housing. We want to understand why some counties have longer waiting lists than others. Thus, we plan to predict months_waiting with the race, socioeconomic status, health conditions, age, and other characteristics of residents.
+
+##Cleaning the Data
+In addition to removing all the observations that were not Housing Choice Vouchers or Public Housing, we removed strange outliers such as months_waiting that exceeded 3000 months and pct_occcupied that were greater than 100%. We also created two more subsets, separating Housing Choice Vouchers and Public Housing. We did this because we may decide to just focus on one form of subsidized housing. The dataset with HCV and Public Housing includes 4155 observations, the HCV-only dataset has 2247, and the Public Housing dataset has 1908.
+```{r, warning=FALSE}
+COUNTY_2016 <- 
+  read_excel("/home/zimmer2/Stats 272 F17/Project/Ben, Luke, & Josh/county_2016.xlsx")
+
+reduced2016 <- filter(COUNTY_2016, months_waiting!=-4, 
+                      months_waiting!=-1, months_waiting!=-5, months_waiting<2000,
+                      pct_occupied<=100, program_label=="Housing Choice Vouchers"
+                      | program_label=="Public Housing")
+
+hcv2016 <- filter(reduced2016, program_label=="Housing Choice Vouchers")
+ph2016 <- filter(reduced2016, program_label=="Public Housing")
+```
+
+##Exploring the Data
+```{r}
+mean(COUNTY_2016$pct_occupied)
+
+layout(matrix(c(1, 2), 1, 2))
+
+boxplot(pct_occupied~program_label, data=reduced2016,
+        main = "% of Houses Occupied", ylab = "% houses occupied")
+
+boxplot(months_waiting~program_label, data=reduced2016,
+        main = "Months Waiting for Housing", ylim = c(0, 200), ylab = "Months Waiting")
+
+favstats(pct_occupied~program_label, data=reduced2016)
+favstats(months_waiting~program_label, data = reduced2016)
+
+```
+
+Percent Occupied vs Program: We see that the range for Public Housing is narrower than Housing Choice Vouchers, and the interquartile range is smaller. However, public housing has sufficiently more outliers lower than the minimum. Housing Choice Vouches has a wider range, and a smaller median, first and third quartile, and minimum, but less than Public Housing. Both of the maximums are at 100. Also, it appears that both Housing Choice Vouchers and Public Housing are skewed right, although Public Housing seems sufficiently more skewed right. This means that the the percent occupied tends to be closer to a higher percentage, than a smaller percentage.  
+
+Months Waiting vs Program: We see that Housing Choice Vouchers and Public Housing have similar plots. Both have most of the monts between 0-50, we about the same number of outliers. Housing Choice Vouchers have a higher maximum, and a wider quartile range, as well as a larger median, yet both graphs still look to be relatively equal. 
+
+##Relationship Plots
+```{r}
+layout(matrix(c(1, 2, 3, 4), 2, 2))
+plot(months_waiting~hh_income, data=reduced2016, ylim=c(0,150))
+plot(months_waiting~pct_occupied, data=hcv2016)
+plot(months_waiting~hh_income, data=hcv2016, ylim=c(0,150))
+plot(months_waiting~pct_white_nothsp, data=hcv2016)
+```
+
+
+##Data Distribution and Transformation
+```{r, warning=FALSE}
+par(mfrow=c(1,2))
+plot(density(hcv2016$months_waiting, xlim=(c(0,1))), main="Months Density")
+plot(density(log(hcv2016$months_waiting+1), xlim=(c(0,1))), main="Transformed Months Density")
+hcv2016 <- mutate(hcv2016, logmonths = log(months_waiting + 1))
+```
+
+The months waiting is skewed right, so when we transform it with the function log(months_waiting +1), we make months_waiting normal. This is because we center the variable around its mean, and make a logarithmic transformation to normalize it. Because this transformation made the distribution more normal, we will create a new variable called "logmonths" and use it as our response variable instead of months_waiting.
+
+##Preview of Modeling Plans: Predicting Months on Waiting List for Housing Choice Vouchers 
+```{r}
+model1 <- lm(logmonths~total_units+pct_occupied+pct_white_nothsp, data=hcv2016)
+summary(model1)
+
+#model2 <- lm(logmonths~total_units+pct_female_head+pct_occupied, data=hcv2016)
+#model3 <- lm(logmonths~hh_income+pct_white_nothsp, data=hcv2016)
+```
+
+Above are three examples of different models we have tried fitting using logmonths as a response variable. We have included the summary for model1, which controls for total_units and pct_occupied, then uses pct_white_nothsp as a predictor. Evidently, there is a statistically significant negative relationship between the months on the waiting list and the percent of participants that are white. We are unsure about the interpretation of the coefficient on logmonths and will consult with Professor Eisinger about it.
+
+##Correlation and Potential Multicollinearity
+Because income, race, sex, and other demographics are likely to be correlated with each other, we have begun to look for multicollinearity. The correlation coefficient between percent of households with a female head and percent of households that are white is -.57, which is relatively large. We will keep an eye on this as we move forward.
+```{r}
+hhincome <- hcv2016$hh_income
+pctfemalehead <- hcv2016$pct_female_head
+pctwhitenothsp <- hcv2016$pct_white_nothsp
+
+cor(pctfemalehead,pctwhitenothsp)
+cor(hhincome, pctwhitenothsp)
+```
+
+We have three main concerns with our data. First, our response variable is not normally distributed. We solved this problem by performing a logarithmic transformation on it. Second, many demographic predictors might be correlated with each other. We are finding the correlation coefficients between predictors to make sure we know about any multicollinearity. Third, all of our observations are county averages. This means that we cannot make inferences about individuals trying to apply for subsidized housing. We don't have information about individual people, and this limits what we can learn from the data. Despite this, we can still uncover interesting insights about why some county waiting times are longer than others.

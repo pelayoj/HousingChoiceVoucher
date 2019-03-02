@@ -1,0 +1,290 @@
+---
+title: "Post-Proposal2"
+author: "Ben Westermeyer"
+date: "11/21/2017"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+require(mosaic)
+require(car)
+library(leaps)
+require(readxl)
+```
+
+# Cleaning the Data
+```{r, warning=FALSE}
+COUNTY_2016 <- 
+  read_excel("/home/zimmer2/Stats 272 F17/Project/Ben, Luke, & Josh/county_2016.xlsx")
+
+reduced2016 <- filter(COUNTY_2016, months_waiting!=-4, 
+                      months_waiting!=-1, months_waiting!=-5, months_waiting<2000,
+                      pct_occupied<=100, program_label=="Housing Choice Vouchers"
+                      | program_label=="Public Housing")
+
+hcv2016 <- filter(reduced2016, program_label=="Housing Choice Vouchers")
+
+
+# Create region variables
+hcv2016 <- mutate(hcv2016, northeast=ifelse(state=="ME" | state=="NH" | state=="VT" | state=="CT" | state=="NY" | state=="NJ"| state=="MA" | state=="RI" | state=="PA", 1,0))
+
+hcv2016 <- mutate(hcv2016, west=ifelse(state=="WA"| state== "OR" | state=="CA" | state=="NV" | state=="MT" | state=="ID" | state=="WY" | state=="UT" | state=="CO",1,0))
+
+hcv2016 <- mutate(hcv2016, midwest=ifelse(state == "ND" | state == "SD" | state == "ND" | state == "KS" | state == "MN" | state == "IA" | state == "MO" | state == "WI" | state == "IL" | state == "MI" | state == "IN" | state == "OH", 1, 0))
+
+hcv2016 <- mutate(hcv2016, southwest=ifelse(state == "AZ" | state == "NM" | state == "TX" | state == "OK", 1, 0))
+
+hcv2016 <- mutate(hcv2016, southeast=ifelse(state == "AR" | state == "LA" | state == "MS" | state == "TN" | state == "KY" | state == "WV" | state == "VA" | state == "DC" | state == "MD" | state == "DE" | state == "NC" | state == "SC" | state == "GA" | state == "AL" | state == "FL", 1, 0))
+
+# Change -1s in the percentage of ethnicity group to 0s
+hcv2016 <- mutate(hcv2016, pct_black_nonhsp = ifelse(pct_black_nonhsp == -1, 0, pct_black_nonhsp))
+hcv2016 <- mutate(hcv2016, pct_native_american_nonhsp = ifelse(pct_native_american_nonhsp == -1, 0, pct_native_american_nonhsp))
+hcv2016 <- mutate(hcv2016, pct_asian_pacific_nonhsp = ifelse(pct_asian_pacific_nonhsp == -1, 0, pct_asian_pacific_nonhsp))
+hcv2016 <- mutate(hcv2016, pct_white_nothsp = ifelse(pct_white_nothsp == -1, 0, pct_white_nothsp))
+hcv2016 <- mutate(hcv2016, pct_black_hsp = ifelse(pct_black_hsp == -1, 0, pct_black_hsp))
+hcv2016 <- mutate(hcv2016, pct_wht_hsp = ifelse(pct_wht_hsp == -1, 0, pct_wht_hsp))
+hcv2016 <- mutate(hcv2016, pct_oth_hsp = ifelse(pct_oth_hsp == -1, 0, pct_oth_hsp))
+
+# check whether we have 99% - 100% for each variable
+ethnicityData <- hcv2016[c('pct_black_nonhsp', 'pct_native_american_nonhsp', 'pct_asian_pacific_nonhsp', 'pct_white_nothsp', 'pct_black_hsp', 'pct_wht_hsp', 'pct_oth_hsp')]
+count(rowSums(ethnicityData) == 99)
+
+# Getting rid of unneccessary columns
+hcv2016 <- subset(hcv2016, select = -c(fedhse:longitude))
+hcv2016 <- subset(hcv2016, select = -c(Quarter:states))
+hcv2016 <- subset(hcv2016, select = -c(sumlevel:code))
+hcv2016 <- subset(hcv2016, select = -c(pha_total_units:ha_size))
+
+hcv2016 <- mutate(hcv2016, logmonths = log(months_waiting))
+
+hcv2016 <- mutate(hcv2016, pct_wage_major = ifelse(pct_other_major == 100 & pct_wage_major == -1, 0, pct_wage_major))
+```
+
+```{r}
+# looking at test
+test_missing <- filter(COUNTY_2016, program_label=="Housing Choice Vouchers")
+test <- filter(test_missing, months_waiting==-4)
+
+mean(test$pct_occupied)
+mean(hcv2016$pct_occupied)
+
+cor(hcv2016$pct_occupied, hcv2016$months_waiting)
+```
+
+
+Here is a model using log(months) instead of log(months+1). A 1 percentage point increase in white people in a county's HCV program is associated with a .992 factor change in months waiting. In other words, each percentage point increase in white people in the county is associated with a 0.8% decrease in waiting times. If a county's whiteness increases by 10 percentage points, our model predicts waiting times will decrease by 8%.
+```{r}
+model1 <- lm(log(months_waiting)~total_units+pct_occupied+pct_white_nothsp, data=hcv2016)
+summary(model1)
+exp(-7.535e-03)
+
+vif(model1)
+```
+
+# Ethnicity Variables
+```{r}
+modelBNH <- lm(logmonths ~ total_units + pct_occupied + pct_black_nonhsp, data = hcv2016)
+modelNANH <- lm(logmonths ~ total_units + pct_occupied + pct_native_american_nonhsp, data = hcv2016)
+modelAPNH <- lm(logmonths ~ total_units + pct_occupied + pct_asian_pacific_nonhsp, data = hcv2016)
+
+summary(modelBNH)
+exp(5.627e-03)
+vif(modelBNH)
+
+summary(modelNANH)
+exp(-3.437e-03)
+
+summary(modelAPNH)
+exp(1.237e-02)
+
+```
+
+#Now that we're done transforming our response variable, let's try some more models
+```{r}
+model2 <- lm(log(months_waiting)~total_units+pct_occupied+pct_white_nothsp+pct_female_head+pct_black_nonhsp+pct_overhoused, data=hcv2016)
+summary(model2)
+
+vif(model2)
+
+model3 <- lm(logmonths~pct_age62plus, data=hcv2016)
+summary(model3)
+
+
+model4 <- lm(logmonths~northeast+southeast+southwest+west, data=hcv2016)
+summary(model4)
+
+vif(model4)
+
+#The interaction terms cause a lot of multicollinearity
+summary(lm(logmonths~pct_white_nothsp+northeast+west+southwest+southeast, data=hcv2016))
+interactionmodel <- lm(logmonths~pct_white_nothsp*northeast+pct_white_nothsp*west+pct_white_nothsp*southwest+pct_white_nothsp*southeast, data=hcv2016)
+vif(interactionmodel)
+```
+
+# Original Variables (NOT USING)
+```{r}
+bestss <- regsubsets(logmonths ~ total_units + rent_per_month + pct_occupied + people_per_unit + pct_white_nothsp + pct_black_nonhsp + pct_native_american_nonhsp + pct_asian_pacific_nonhsp + pct_black_hsp + pct_wht_hsp + pct_oth_hsp + hh_income + northeast + southeast + west + southwest + pct_female_head + pct_overhoused + pct_disabled_lt62 + pct_disabled_ge62 + pct_age62plus + pct_1adult, data = hcv2016, method = "exhaustive", nbest = 4)
+
+summary.bestss <- summary(bestss, matrix.logical = TRUE) # matrix.logical term makes table of included terms more readable
+summary.bestss
+coef(bestss, 1:11)
+
+plot(bestss, scale = "adjr2", main = "Adjusted R^2")
+plot(bestss, scale = "Cp", main = "Mallow's Cp")
+
+
+# Which model has best adjusted R^2
+which.max(summary.bestss$adjr2)
+summary.bestss$which[29,]
+
+# Which model has best Mallow's Cp
+which.min(summary.bestss$cp)
+summary.bestss$which[29,]
+
+
+best.lm <- lm(logmonths ~ people_per_unit + pct_white_nothsp + northeast + west + southwest + southeast + pct_female_head + pct_disabled_lt62 + pct_1adult, data = hcv2016)
+summary(best.lm)
+vif(best.lm)
+confint(best.lm)
+
+cor(hcv2016$pct_female_head, hcv2016$pct_1adult)
+```
+
+
+#Family Structure Subset
+```{r}
+bestss1 <- regsubsets(logmonths ~ pct_2adults + pct_1adult + pct_female_head +pct_female_head_child+pct_disabled_lt62+pct_disabled_ge62+pct_disabled_all+pct_lt24_head+pct_age25_50+pct_age51_61+pct_age62plus+pct_age85plus, data = hcv2016, method = "exhaustive", nbest = 4)
+
+
+summary.bestss1 <- summary(bestss1, matrix.logical = TRUE) # matrix.logical term makes table of included terms more readable
+summary.bestss1
+coef(bestss1, 1:11)
+
+plot(bestss1, scale = "adjr2", main = "Adjusted R^2")
+plot(bestss1, scale = "Cp", main = "Mallow's Cp")
+
+
+# Which model has best adjusted R^2
+which.max(summary.bestss1$adjr2)
+summary.bestss1$which[29,]
+
+# Which model has best Mallow's Cp
+which.min(summary.bestss1$cp)
+summary.bestss1$which[29,]
+
+
+best.lm1 <- lm(logmonths ~ pct_female_head+pct_1adult+pct_female_head_child+pct_disabled_lt62+pct_disabled_ge62+pct_age25_50+pct_age51_61, data=hcv2016)
+summary(best.lm1)
+vif(best.lm)
+confint(best.lm)
+
+best.lm2 <- lm(logmonths ~ pctfemalehead+pct_1adult+pct_disabled_lt62+pct_disabled_ge62+pct_age25_50+pct_age51_61, data=hcv2016)
+summary(best.lm2)
+```
+
+#Using some variables we hadn't considered before gets the highest r squared yet
+```{r}
+elselm <- lm(logmonths ~ pct_movein + person_income + pct_wage_major + pct_welfare_major + tpct_ownsfd + pct_white_nothsp + southeast + northeast + west + southwest, data = hcv2016)
+summary(elselm)
+
+bestss <- regsubsets(logmonths ~ pct_movein + person_income + pct_wage_major + tpct_ownsfd + rent_per_month + pct_occupied + people_per_unit + pct_white_nothsp + pct_black_nonhsp + pct_native_american_nonhsp + pct_black_hsp + pct_wht_hsp + pct_oth_hsp + hh_income + northeast + southeast + west + southwest + pct_female_head + pct_disabled_lt62 + pct_disabled_ge62 + pct_age62plus + pct_1adult + pct_median, data = hcv2016, method = "exhaustive", nbest = 3)
+#reference classes are asian pacific islander non hispanic and midwest and pct_other_major and pct_welfare_major are reference.
+
+summary.bestss <- summary(bestss, matrix.logical = TRUE) # matrix.logical term makes table of included terms more readable
+summary.bestss
+coef(bestss, 1:11)
+
+plot(bestss, scale = "adjr2", main = "Adjusted R^2")
+plot(bestss, scale = "Cp", main = "Mallow's Cp")
+
+# Which model has best adjusted R^2
+which.max(summary.bestss$adjr2)
+summary.bestss$which[22,]
+
+# Which model has best Mallow's Cp
+which.min(summary.bestss$cp)
+summary.bestss$which[22,]
+
+summary(lm(logmonths~pct_movein+person_income+pct_wage_major+tpct_ownsfd+rent_per_month+pct_white_nothsp+west+southwest+pct_median, data=hcv2016))
+
+#We add southeast and northeast back in because all the regions are effectively one factor variable; It would not make sense to exclude one but include another. We also tried adding pct_female_head and pct_disabled_lt62, which brought the r squared up higher and maintained the significance of all other variables
+
+latest.lm <- lm(logmonths ~ pct_movein + person_income + pct_wage_major + tpct_ownsfd + rent_per_month + pct_white_nothsp + northeast + west + southwest + southeast + pct_female_head + pct_disabled_lt62, data = hcv2016)
+summary(latest.lm)
+vif(latest.lm)
+confint(latest.lm)
+
+newData <- hcv2016[c('logmonths', 'pct_movein', 'person_income', 'pct_wage_major', 'tpct_ownsfd', 'rent_per_month', 'pct_occupied', 'people_per_unit', 'pct_white_nothsp', 'pct_black_nonhsp', 'pct_native_american_nonhsp', 'pct_black_hsp', 'pct_wht_hsp', 'pct_oth_hsp', 'hh_income', 'northeast', 'west', 'southwest', 'southeast', 'pct_female_head',  'pct_disabled_lt62', 'pct_disabled_ge62', 'pct_age62plus', 'pct_1adult', 'pct_median')]
+cor(newData) > 0.5
+
+```
+
+#New Data
+```{r}
+newData <- hcv2016[c('logmonths', 'pct_movein', 'person_income', 'pct_wage_major', 'tpct_ownsfd', 'rent_per_month', 'pct_occupied', 'people_per_unit', 'pct_white_nothsp', 'pct_black_nonhsp', 'pct_native_american_nonhsp', 'pct_black_hsp', 'pct_wht_hsp', 'pct_oth_hsp', 'hh_income', 'northeast', 'west', 'southwest', 'southeast', 'pct_female_head',  'pct_disabled_lt62', 'pct_disabled_ge62', 'pct_age62plus', 'pct_1adult', 'pct_median')]
+cor(newData) > 0.5
+
+bestss <- regsubsets(logmonths ~ pct_movein + person_income + pct_wage_major + tpct_ownsfd + rent_per_month + pct_occupied + people_per_unit + pct_white_nothsp + pct_black_nonhsp + pct_native_american_nonhsp + pct_black_hsp + pct_wht_hsp + pct_oth_hsp + hh_income + northeast + southeast + west + southwest + pct_female_head + pct_disabled_lt62 + pct_disabled_ge62 + pct_age62plus + pct_1adult + pct_median, data = newData, method = "exhaustive", nbest = 3)
+#reference classes are asian pacific islander non hispanic and midwest and pct_other_major and pct_welfare_major are reference.
+
+summary.bestss <- summary(bestss, matrix.logical = TRUE) # matrix.logical term makes table of included terms more readable
+summary.bestss
+coef(bestss, 1:11)
+
+plot(bestss, scale = "adjr2", main = "Adjusted R^2")
+plot(bestss, scale = "Cp", main = "Mallow's Cp")
+
+# Which model has best adjusted R^2
+which.max(summary.bestss$adjr2)
+summary.bestss$which[22,]
+
+# Which model has best Mallow's Cp
+which.min(summary.bestss$cp)
+summary.bestss$which[22,]
+
+latest.lm <- lm(logmonths ~ pct_movein + person_income + pct_wage_major + tpct_ownsfd + rent_per_month + pct_white_nothsp + northeast + west + southwest + southeast + pct_female_head + pct_disabled_lt62, data = newData)
+summary(latest.lm)
+
+```
+
+#Adding the region variables explains significant additional variation, so we should include them.
+```{r}
+best.lm <- lm(logmonths ~ people_per_unit + pct_white_nothsp + northeast + west + southwest + southeast + pct_female_head + pct_disabled_lt62 + pct_1adult, data = hcv2016)
+noregions <- lm(logmonths ~ people_per_unit + pct_white_nothsp + pct_female_head + pct_disabled_lt62 + pct_1adult, data = hcv2016)
+anova(best.lm, noregions)
+```
+
+Notes for the final paper:
+write to an audience that has a background knowledge in statistics but has no knowledge of your topic. Don't overwhelm the reader with summary statistics.
+be more specific with research question than just saying "what factors affect months waiting?"
+Some options: What is the effect of race on months waiting? What demographics within counties are associated with longer waiting lists?
+Variable Selection: Best Subsets of about 10 variables. Could also do Shrinkage (lasso)?
+
+REMAINING QUESTIONS (AND ANSWERS)
+1. Any other variables to put in best subsets? - What we are doing works for the most part, although there is not guarantee that the variables are not explaining the same thing from other best subsets. We could also find the 10 best predictors in a bunch of one-predictor models and see how those predictors fare against each other if they are all included in best subsets.
+
+2. If pct female head and pct 1 adult are positively correlated (.7) why do they have opposite effects on months waiting of almost the exact same magnitude? - No great answer on this one, but pct_female_head is positive if pct_1adult is left out and pct_1adult is negative if pct_female_head is left out; same sign as when both are in the model, so no sign flip; Include both if they add something, and they seem to (pct_female_head increases waiting time, pct_1adult decreases waiting time)
+
+3. Even though southeast is not a significant predictor (not significantly different from midwest), it is still part of the borader region predictor and should be included in the model; it may change the fit by a small amount and should therefore be included; since we made all of these variables by hand, best subsets is not smart enough to keep it in the model, even though it should be.
+
+
+
+#Junkyard
+
+
+### Explanatory Variables' Relationship with Log(Months)
+```{r, echo=FALSE}
+### EDA of other variables
+firsthcv <- hcv2016[c('logmonths', 'pct_movein', 'person_income', 'pct_wage_major', 'tpct_ownsfd', 'rent_per_month')]
+secondhcv <- hcv2016[c('logmonths','pct_occupied', 'people_per_unit', 'pct_white_nothsp', 'pct_black_nonhsp', 'pct_native_american_nonhsp')]
+thirdhcv <- hcv2016[c('logmonths', 'pct_black_hsp', 'pct_wht_hsp', 'pct_oth_hsp', 'pct_asian_pacific_nonhsp', 'hh_income')]
+fourthhcv <- hcv2016[c('logmonths','midwest', 'northeast', 'west', 'southwest', 'southeast')]
+fifthhcv <- hcv2016[c('logmonths','pct_female_head',  'pct_disabled_lt62', 'pct_disabled_ge62', 'pct_age62plus', 'pct_1adult', 'pct_median')]
+# pairs(firsthcv)
+# pairs(secondhcv)
+# pairs(thirdhcv)
+# pairs(fourthhcv)
+# pairs(fifthhcv)
+
+# plot(logmonths~pct_movein, data=hcv2016, main="Percentage of New Member Households vs. Logmonths")
+```
+Using the pairs function, we visualized logmonths' correlation with all of our explanatory variables. Since there are so many observations, most of these plots were too dense to make conclusions about correlation. Yet, logmonths had a visible inverse relationship with pct_movein. This variable measures the proportion of a given county's HCV participants that have moved into HCV housing in the past year. It is understandable that there would be a negative relationship; The greater the percentage of new HCV participants, the higher the turnover. Faster turnover indicates that public housing agencies are moving through their waiting lists more quickly.

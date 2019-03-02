@@ -1,0 +1,242 @@
+---
+title: "Explaining the Length of Housing Choice Voucher Waiting Lists"
+author: "Josh Pelayo, Ben Westermeyer, and Luke Zimmerman"
+date: "12/18/2017"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+library(mosaic)
+library(dplyr)
+library(car)
+library(readxl)
+library(kableExtra)
+library(knitr)
+library(leaps)
+
+COUNTY_2016 <- 
+  read_excel("/home/zimmer2/Stats 272 F17/Project/Ben, Luke, & Josh/county_2016.xlsx")
+
+hcv2016 <- filter(COUNTY_2016, program_label=="Housing Choice Vouchers")
+
+hcv2016 <- filter(hcv2016, months_waiting!=-4, 
+                      months_waiting!=-1, months_waiting!=-5)
+
+hcv2016 <- filter(hcv2016, months_waiting<4000)
+
+hcv2016 <- filter(hcv2016, pct_occupied<=100)
+
+# Create region variables
+hcv2016 <- mutate(hcv2016, northeast=ifelse(state=="ME" | state=="NH" | state=="VT" | state=="CT" | state=="NY" | state=="NJ"| state=="MA" | state=="RI" | state=="PA", 1, 0))
+
+hcv2016 <- mutate(hcv2016, west=ifelse(state=="WA"| state== "OR" | state=="CA" | state=="NV" | state=="MT" | state=="ID" | state=="WY" | state=="UT" | state=="CO" | state=="AK" | state=="HI", 1, 0))
+
+hcv2016 <- mutate(hcv2016, midwest=ifelse(state == "ND" | state == "SD"  | state == "NE" | state == "KS" | state == "MN" | state == "IA" | state == "MO" | state == "WI" | state == "IL" | state == "MI" | state == "IN" | state == "OH", 1, 0))
+
+hcv2016 <- mutate(hcv2016, southwest=ifelse(state == "AZ" | state == "NM" | state == "TX" | state == "OK", 1, 0))
+
+hcv2016 <- mutate(hcv2016, southeast=ifelse(state == "AR" | state == "LA" | state == "MS" | state == "TN" | state == "KY" | state == "WV" | state == "VA" | state == "DC" | state == "MD" | state == "DE" | state == "NC" | state == "SC" | state == "GA" | state == "AL" | state == "FL", 1, 0))
+
+# Change -1s in the percentage of ethnicity group to 0s
+hcv2016 <- mutate(hcv2016, pct_black_nonhsp = ifelse(pct_black_nonhsp == -1, 0, pct_black_nonhsp))
+hcv2016 <- mutate(hcv2016, pct_native_american_nonhsp = ifelse(pct_native_american_nonhsp == -1, 0, pct_native_american_nonhsp))
+hcv2016 <- mutate(hcv2016, pct_asian_pacific_nonhsp = ifelse(pct_asian_pacific_nonhsp == -1, 0, pct_asian_pacific_nonhsp))
+hcv2016 <- mutate(hcv2016, pct_white_nothsp = ifelse(pct_white_nothsp == -1, 0, pct_white_nothsp))
+hcv2016 <- mutate(hcv2016, pct_black_hsp = ifelse(pct_black_hsp == -1, 0, pct_black_hsp))
+hcv2016 <- mutate(hcv2016, pct_wht_hsp = ifelse(pct_wht_hsp == -1, 0, pct_wht_hsp))
+hcv2016 <- mutate(hcv2016, pct_oth_hsp = ifelse(pct_oth_hsp == -1, 0, pct_oth_hsp))
+
+# check whether we have 99% - 100% for each variable
+ethnicityData <- hcv2016[c('pct_black_nonhsp', 'pct_native_american_nonhsp', 'pct_asian_pacific_nonhsp', 'pct_white_nothsp', 'pct_black_hsp', 'pct_wht_hsp', 'pct_oth_hsp')]
+count(rowSums(ethnicityData) >= 99)
+
+hcv2016 <- mutate(hcv2016, logmonths = log(months_waiting))
+
+hcv2016 <- hcv2016[c('entities','months_waiting','logmonths', 'pct_movein', 'person_income', 'pct_wage_major', 'tpct_ownsfd', 'rent_per_month', 'pct_occupied', 'people_per_unit', 'pct_white_nothsp', 'pct_black_nonhsp', 'pct_native_american_nonhsp', 'pct_black_hsp', 'pct_wht_hsp', 'pct_oth_hsp', 'pct_asian_pacific_nonhsp', 'hh_income','state','midwest', 'northeast', 'west', 'southwest', 'southeast', 'pct_female_head',  'pct_disabled_lt62', 'pct_disabled_ge62', 'pct_age62plus', 'pct_1adult', 'pct_median')]
+
+```
+
+# Introduction
+In 2016, the U.S. Department of Housing and Urban Development (HUD) released information about the subsidized housing programs that it sponsors around the country. The data set contains 13,639 observations, each one representing a specific affordable housing program in a specific U.S. county. An example observation is Public Housing in Bibb County, AL. Of all the different programs, we are particularly interested in Housing Choice Vouchers (HCV). According to HUD, “HCV, formerly known as Section 8, is the federal government's major program for assisting very low-income families, the elderly, and the disabled to afford decent, safe, and sanitary housing in the private market" (HUD.gov).  Under the HCV program, participants can find and lease any private housing that meets HUD's health and safety requirements. Local public housing agencies (which receive funding from HUD) then pay the landlord a subsidy to lower the payment required of the participant. The flexibility that HCV grants to its participants makes it the most popular form of affordable housing today.
+  
+The 74 variables in the data set provide information on the demographics, health, age, income, and other circumstantial information of each program in each county. Because the demand for Housing Choice Vouchers usually exceeds the supply, the public housing agencies that administer the subsidies often have extensive waiting lists. Using the months_waiting variable as a response, we investigate which demographic, geographic, and socioeconomic factors influence the amount of time that people spend on HCV waiting lists across U.S. counties through multiple linear regression.
+
+Because 74 variables were more than we needed for this analysis, we selected just 23 to explore in depth. We made this discernment by reading the meaning of each variable and deciding which we thought would be related to waiting times. After creating some new variables from the existing data, the number of variables of interest rose to 29. Although not all 29 of these variables would be included in our final model, they were all of interest to us initially. Below is a table of these variables.
+
+### Definitions of Important Variables
+```{r, echo=FALSE}
+info_table <- read.csv("~/Stats 272 F17/Project/Ben, Luke, & Josh/Table for Stats Project - Sheet1.csv")
+kable(info_table)
+```
+
+
+### Data Cleaning: Removing Outliers and Filtering Missing Values
+Once we narrowed the data set down to just include the 3067 Housing Choice Voucher observations and the 29 explanatory variables we were interested in, further data cleaning was necessary.
+  
+We filtered out all observations in which the months_waiting response variable was either suppressed since there were less than 11 reported families in the county (represented by -4) or non-reporting (represented by -5). We also chose to remove all missing values (represented by -1), which eliminated 237 more observations. It is possible that -1s indicate that the average waiting time was 0 months. This would make sense given that there are 0 observations in which months_waiting is 0. However, since there is no way for us to make a generalized inference about all of these missing data, we removed all of these -1 observations, leaving us with 2353 observations of Housing Choice Voucher programs in American counties.
+
+When we looked at the distribution of months_waiting in this HCV data set, we noticed one alarming outlier: Putnam County, FL had an average months_waiting of 4830 months, which is equal to 402.5 years. The next highest average months_waiting was 325. Putnam was clearly an error, so we removed it from the data set. After this removal we also noticed some strange pct_occupied values greater than 100%. At first we thought this might be a signal of an overhousing problem in some counties. However, the definition of the pct_occupied variable is occupied units as the percentage of units available. Since there cannot be more occupied units than available ones, we inferred that these were errors and we removed them from our data set. This left us with our final number of 2247 observations.
+
+After removing problematic observations, we shifted our attention to recoding. We found that the data set had a large amount of -1s for the seven variables pertaining to the percentage of a certain ethnicity in a county. In our data set, a -1 implied that the data was missing from the model. However, we inferred the value of many of these -1s were 0 by adding the percentages of the other ethnic groups together, and finding that they were $100\%$. For example, if pct_white_nothsp is 100, we are able to infer that the other six ethnicity percentage variables of pct_black_nonhsp, pct_native_american_nonhsp, pct_asian_pacific_nonhsp, pct_black_hsp, pct_wht_hsp, and pct_oth_hsp, were all 0, even if the original data set had a -1. For all of these variables, we converted all -1s to 0. We found that $1466$ observations of the $2247$ observations in our data set have a perfect $100\%$ ethnicity percentage. We inferred that the data were rounded to the nearest percentage point, given that $290$ observations have a total of $101\%$ and $457$ observations with a total of $99\%$ across these variables. The total spread is $97\%$ to $102\%$, which we attribute to rounding errors within the data collection.
+
+### Transforming Months Waiting to Log(Months)
+We noticed the distribution of months_waiting was skewed right, with the highest density right above zero. Trying to create a linear regression for a non-normal response variable would cause problems with our residual assumptions. Without a normally distributed response, our residuals would not be normally distributed, while linearity and equal variance may be compromised as well. One possible reason for this is the large variance in months waiting, even among similar areas. A 1997 study found that the median waiting time in the San Francisco area varied from $5$ months in San Mateo County to $37$ months in Richmond County. Furthermore, the median waiting time in all metropolitan areas was $15.3$ months (Painter, G, 1997). To correct our response variable, we performed a logarithmic transformation on months_waiting to create a more normal distribution. The graphs below show that this transformation was effective. Thus, we created a logmonths variable and moved forward with this as our response variable.
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+plot(density(hcv2016$months_waiting), main="Months Density")
+plot(density(log(hcv2016$months_waiting)), main="Log(Months) Density")
+```
+
+### Sorting States into Regions to Create Categorical Variables
+One of our primary research goals was to examine the variation of waiting times between different locations in the United States. If we used each of the 50 states as categorical explanatory variables, we would have a superfluous model. Instead, we created five new indicator variables to represent the five regions of the country: northeast, west, midwest, southwest, and southeast. We sorted all 50 states into these categories. See the appendix for which states are included in each region.
+ 
+------------------------------------------------------------------------------------------------------------------------------------
+
+# Research and Results
+
+Research Question: What determines the average length of time that people in a given county spend on the Housing Choice Voucher waiting list?
+
+Null hypothesis: none of the coefficients of our explanatory variables will be significantly different from zero.
+
+Alternative hypothesis: at least one of the coefficients will be significantly different from zero.
+
+### Exploratory Data Analysis
+
+```{r, echo=FALSE}
+par(mfrow=c(2,3))
+hist(hcv2016$logmonths[hcv2016$northeast==1], main="Northeast", xlab="log(months)")
+hist(hcv2016$logmonths[hcv2016$midwest==1], main="Midwest", xlab="log(months)")
+hist(hcv2016$logmonths[hcv2016$southwest==1], main="Southwest", xlab="log(months)")
+hist(hcv2016$logmonths[hcv2016$west==1], main="West", xlab="log(months)")
+hist(hcv2016$logmonths[hcv2016$southeast==1], main="Southeast", xlab="log(months)")
+```
+
+The above histograms show clearly that not all of the regions have the same distribution of waiting times. Midwest, Southwest, and West have relatively normal distributions while Northeast and Southeast both appear skewed left. Also, northeast and west have mean waiting_times above $3$, while midwest and southwest have values less than $2.5$. Southeast is somewhere in between, with a mean of $2.82$. This finding signals to us that these region variables will be valuable predictors of the variation in average months spent on HCV waiting lists.
+
+```{r, echo=FALSE}
+xs=quantile(hcv2016$pct_white_nothsp,c(0,.25,.5,.75, 1))
+xs[1]=xs[1]-.00005
+df1 <- hcv2016 %>% mutate(category=cut(pct_white_nothsp, breaks=xs, labels=c("0-22%","23-69%", "70-91%","92-100%")))
+boxplot(df1$logmonths~df1$category,col=3:5, main= "Percent White vs Log(Months)", ylab = "logmonths)")
+```
+
+To examine the relationship between the percentage of whites in a county and the average waiting time, we partitioned counties into four groups. The first group includes counties that are 0-22% white, the second is 24-69%, the third is 70-91%, and the last is 91-100%. The range of logmonths look fairly equal between the four groups, but as the percentage of whites increases, the average waiting time visibly decreases.
+
+### Best Subsets Using our Variables of Interest (Excluding Reference Level Variables)
+```{r, echo=FALSE, comment=NA}
+bestss <- regsubsets(logmonths ~ pct_movein + person_income + pct_wage_major + tpct_ownsfd + rent_per_month + pct_occupied + people_per_unit + pct_white_nothsp + pct_black_nonhsp + pct_native_american_nonhsp + pct_black_hsp + pct_wht_hsp + pct_oth_hsp + hh_income + northeast + southeast + west + southwest + pct_female_head + pct_disabled_lt62 + pct_disabled_ge62 + pct_age62plus + pct_1adult + pct_median, data = hcv2016, method = "exhaustive", nbest = 1)
+
+# summary.bestss <- summary(bestss, matrix.logical = TRUE) # matrix.logical term makes table of included terms more readable
+# summary.bestss
+
+
+plot(bestss, scale = "adjr2", labels = c("(intercept)", "% movein", "personIncome", "% wageMajor", "tpctOwnsfd", "rentPerMonth", "pctOccupied", "peoplePerUnit", "% whiteNothsp", "% blackNonhsp", "% naAmNonhsp", "% blackHsp", "% whtHsp", "% othHsp", "hhIncome", "northeast", "southeast", "west", "southwest", "% femaleHead", "% disLT62", "% disGE62", "% age62plus", "% 1adult", "% median"), main = "Adjusted R^2")
+# plot(bestss, scale = "Cp", main = "Mallow's Cp")
+
+# Which model has best adjusted R^2
+# which.max(summary.bestss$adjr2)
+# summary.bestss$which[8,]
+
+# Which model has best Mallow's Cp
+# which.min(summary.bestss$cp)
+# summary.bestss$which[22,]
+
+# summary(lm(logmonths~pct_movein+person_income+pct_wage_major+tpct_ownsfd+rent_per_month+pct_white_nothsp+west+southwest+pct_median, data=hcv2016))
+
+# confint(latest.lm)
+```
+
+Notice that pct_asian_pacific_nonhsp and midwest were not included in this best subsets analysis because we used these as reference levels. The best subsets analysis includes every other race percentage and every other region.
+
+As shown in the adjusted $R^2$ graph above, the best subsets method suggested that we include the southwest and west region variables but exclude northeast and southeast. This is an unreasonable suggestion, since these indicator variables are essentially just components of one region variable. We either must include all of them or exclude all of them. In order to decide whether to include or not to include, we performed a nested F-test. The reduced model included all the terms that the best subsets method suggested except for southwest and west. The full model then added southwest, west, northeast, and southeast. The null hypothesis states that adding the region indicator variables explains an insignificant amount of variation in logmonths, making the F statistic zero. The alternative is that the F statistic > 0, meaning that the region variables influence logmonths significantly.
+
+```{r, echo = FALSE}
+# full.lm <- lm(logmonths~pct_movein+person_income+rent_per_month+pct_white_nothsp+west+southwest+northeast+southeast+pct_median+pct_disabled_lt62, data=hcv2016)
+# noregions <- lm(logmonths~pct_movein+person_income+rent_per_month+pct_white_nothsp+pct_median+pct_disabled_lt62, data=hcv2016)
+# anova(full.lm, noregions)
+```
+The nested F-test shows that the F statistic is 22.675, so we reject the null hypothesis. The p-value on such a large F statistic is less than 2.2e-16, which implies that it is extremely unlikely that regions would explain so much variation in logmonths by chance.
+
+### Our Model
+
+We decided to create our final model to predict logmonths with pct_movein, person_income, rent_per_month, pct_white_nothsp, northeast, west, southwest, southeast, pct_median, pct_disabled_lt62, and pct_female_head. See the appendix for the summary of our model. We used best subsets to maximize the $R^2$ and minimize Mallow's CP for our model. The original best subsets did not include pct_female_head. However, it also did not include two of the region indicator variables, southeast and northeast. With southeast and northeast included in the model, we tried adding pct_female_head and found that the model's $R^2$ had substantially increased without compromising coefficient p-values. This is because we split region into indicator variables, and best subsets read each indicator variable separately, rather than reading them as different levels of a single variable. If regions were read as a single variable, best subsets would include pct_female_head.
+
+The variables that are associated with an increase in logmonths are rent_per_month, northeast, west, pct_disabled_lt62, and pct_female_head. The variables that are associated with a decrease in the logmonths are pct_movein, person_income, pct_median, pct_white_nothsp, southwest, and southeast.
+  
+From our results, we can see that each of the regions is significant except for southeast. If the region were in the northeast, months would increase by a factor of $1.354$ (p = 6.36e-06). If the region was in the west, months would increase by a factor of $1.483$ (p = 1.53e-09). If the region was in the southwest, months would change by a factor of $0.708$ (p = 1.45e-07). If the region was in the southeast, months would change by a factor of $0.979$ (p = 0.641580). It is worth noting that coefficient on the southeast indicator variable is not significant, while the other region indicator variables are highly significant.
+
+Our next largest coefficient besides the region variables is pct_median = -3.211e-02. For every percentage point increase in the average household income of participants divided by the median household income, there is a $0.9684$ factor change in months waiting, controlling for all other variables. One possible explanation is that a county with a higher average household income of HCV participants has less income inequality, and thus the people participating in the program are in an economically similar situation to all other people in the county. Therefore, as the gap between the two groups decreases (which corresponds to a higher pct_median), the average waiting time also decreases.
+
+Our most interesting finding involves the pct_white_nothsp variable. For a percentage point increase in a county's percentage of white people, our model finds that months waiting changes by a factor of $0.992$. This is an alarming result. If a county's white population increases by $10$ percentage points, it average waiting time is about $7.2\%$ shorter.
+
+Our research indicates that region and ethnicity significantly impact the average time that participants in Housing Choice Vouchers spend on waiting lists. It is concerning that counties with higher percentages of white people are associated with lower average months on the HCV waiting list. Since local public housing agencies' ability to grant vouchers depends on funding from HUD, it appears that counties with more white people may be receiving more HUD funding, making waiting lists move along more quickly in those areas. Since the average waiting time for white participants is significantly shorter, we would expect a larger concentration of HCV-eligible housing in white neighborhoods. However, a 2001 study found that $1.57\%$ of census tracts in the U.S. with less than a $5\%$ population of African Americans received family public housing, a ratio of $0.70$. In contrast, $3.19\%$ of tracts with greater than a $50\%$ African American population received family public housing, a ratio of $1.75$. In the study, a ratio over 1 indicated a greater than expected percentage of assisted housing developments. (Rohe, W. M., & Freeman, L., 2001). This means that even though more HCV-eligible housing units are more often created in areas with large African American populations, the average waiting time for African Americans is still significantly longer.
+
+### Multicollinearity
+During the modeling process, we frequently found multicollinearity between explanatory variables. The data set contained two variables that measured the amount of single parent households in a county program: pct_1adult and pct_female_head. While we wanted to test both variables, we were suspicious that they may have multicollinearity because every house with a single mom is also a house with one adult parent. Our suspicion was confirmed, as the variables had a $0.71$ correlation coefficient. Thus, even though we included both in the best subsets test, we were wary of any model that included both. Our final model only includes pct_female_head. 
+
+During our modeling process, we tried including interaction terms between region and pct_white_nothsp. We wanted to know if the effect of ethnicity on months waiting varied between regions. However, we found unacceptably high VIF values when we modeled with interaction terms, which is why our final model does not include any.
+
+In our final model, the highest VIF is for person_income, with a value $2.933$. While $2.933$ is well below the acceptability threshold of $5$, it still indicates that about $66\%$ of the variable's variation can be predicted by other variables in the model. We knew that multicollinearity would be an issue in our research since race, income, and family structure are often correlated with each other. Of all the models that we tested, our final model is one of the best in terms of low multicollinearity.
+  
+### Confounding Variables
+One reason that northeast, southwest, and west are associated with such large increases in months waiting is possibly because they populous cities with large populations of low-income people and massive demand for subsidized housing. The southeast region does not have as many big cities. However, the midwest region includes big cities such as Chicago, Minneapolis, and Milwaukee and still has substantially lower waiting times than northeast or west. Thus, the existence of big cities might not be the only reason for variation in waiting times.
+
+### Future Research
+A weakness of our project is that the data only allowed us to examine waiting times at the county level. As a result, we can only make inferences about variation between counties, not individuals. A future research project could analyze the factors that determine the amount of time that individuals spend on HCV waiting lists. This could reveal some insights on how public housing agencies determine who to take off their waiting list first. There are official reasons that certain applicants are prioritized over others, such as domestic abuse or mental illness. However, there may be other factors that influence an applicant's time on a waiting list that housing agencies are not aware of.
+
+As housing choice vouchers become available, eligible families are called from the waiting list, which opens periodically. Thus, the more quickly vouchers become available, the less time people spend on the waiting list. However, the availability of vouchers depends on funding. If HUD provides more funding to a public housing agency, it will administer more vouchers and the average time spent on the waiting list will be shorter. A future project could study the funding that HUD provides to local public housing agencies. It would be interesting to examine the factors that explain the variation in funding between agencies. How does the HUD determine how much funding to give to each PHA? Is there racial bias in the distribution of HUD funding to public housing agencies? Because our research found that predominantly white counties are associated with lower waiting times, and lower waiting times are likely due to more HUD funding, public housing agencies in white counties may be receiving more HUD funding.
+
+---------------------
+
+## Sources
+
+"Housing Choice Vouchers Fact Sheet." HUD.gov / U.S. Department of Housing and Urban Development (HUD), www.hud.gov/topics/housing_choice_voucher_program_section_8.
+
+Painter, G (1997). Does Variation in Public Housing Waiting Lists Induce Intra-Urban Mobility? Journal of Housing Economics, 6(3), 248-276.
+
+Rohe, W. M., & Freeman, L. (2001). Assisted housing and residential segregation: The role of race and ethnicity in the siting of assisted housing developments. American Planning Association. Journal of the American Planning Association, 67(3), 279-292.
+
+## Appendix
+
+#### Model Summary
+```{r, echo=FALSE, comment = NA}
+latest.lm <- lm(logmonths~pct_movein+person_income+rent_per_month+pct_white_nothsp+west+southwest+northeast+southeast+pct_median+pct_disabled_lt62+pct_female_head, data=hcv2016)
+summary(latest.lm)
+```
+
+
+
+Below are the diagnostic plots for our multiple regression model. Our residuals vs. fitted plot shows that our fitted values are centered around 0, which three points having leverage close to +/-3. The normal quantile plot shows that most points fall upon the line, such that the fit is linear. The histogram shows that the model has normally distributed residuals. Overall, the model reasonably meets the assumptions for multiple linear regression.
+
+```{r echo=FALSE, comment=NA}
+plot(latest.lm, c(1, 2))
+hist(latest.lm$residuals, main="Model Residuals Histogram")
+# qqnorm(latest.lm$residuals, main="Model Residuals Q-Q Plot")
+```
+
+#### Confidence Intervals
+```{r, echo=FALSE, comment=NA}
+confint(latest.lm)
+```
+
+#### VIFs
+```{r, echo=FALSE, comment=FALSE}
+vif(latest.lm)
+```
+
+
+#### Region Variables
+
+Northeast: CT, MA, ME, NH, NJ, NY, PA, RI, VT
+
+West: AK, CA, CO, HI, ID, MT, NV, OR, UT, WA, WY
+
+Midwest: IA, IL, IN, KS, MI, MN, MO, ND, NE, OH, SD, WI
+
+Southwest: AZ, NM, OK, TX
+
+Southeast: AL, AR, DC, DE, FL, GA, KY, LA, MD, MS, NC, SC, TN, VA, WV
+
